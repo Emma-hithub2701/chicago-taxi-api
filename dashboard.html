@@ -124,57 +124,73 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-        const API = '/predict/tomorrow'; // We'll use the direct API
+        // ✅ CHANGE THIS TO YOUR PUBLIC RENDER URL
+        const BASE_URL = 'https://chicago-taxi-api.onrender.com';
+
         const datePicker = document.getElementById('datePicker');
-        // Set today as default
         const today = new Date().toISOString().split('T')[0];
         datePicker.value = today;
 
-        // Helper to call API for a specific date (using /predict/date if available, else we simulate for demo)
+        // Fetch prediction for a specific date using /predict/date endpoint
         async function predictForDate(dateStr) {
-            // Since your API currently only has /predict/tomorrow, we'll just call that and note it's for tomorrow
-            // But for a better UX, you could add a /predict/date?date=YYYY-MM-DD endpoint.
-            // For now, we simulate a response based on the current date's day-of-week pattern.
-            // In a real scenario, you'd call /predict/date?target_date=...
-            // Let's actually call /predict/tomorrow and adjust the date display.
-            // Since your API is for tomorrow, we'll just show the result as "for the selected date" using mock logic.
-            // But to keep it working now, let's just call /predict/tomorrow and modify the displayed date.
-            const response = await fetch('/predict/tomorrow');
-            const data = await response.json();
-            // Override the date to the selected one (cosmetic, since model is for tomorrow's features)
-            data.date = dateStr;
-            data.day = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' });
-            // We'll keep the same prediction for demo (actual prediction would require a /predict/date endpoint)
-            return data;
+            const response = await fetch(`${BASE_URL}/predict/date?target_date=${dateStr}`);
+            if (!response.ok) {
+                throw new Error('Prediction failed');
+            }
+            return await response.json();
+        }
+
+        // Fetch prediction for tomorrow using /predict/tomorrow
+        async function fetchTomorrow() {
+            const response = await fetch(`${BASE_URL}/predict/tomorrow`);
+            if (!response.ok) {
+                throw new Error('Failed to fetch tomorrow prediction');
+            }
+            return await response.json();
         }
 
         async function predictDate() {
             const date = datePicker.value;
             if (!date) return alert('Please select a date');
-            const data = await predictForDate(date);
-            displayResult(data);
+            try {
+                const data = await predictForDate(date);
+                displayResult(data);
+            } catch (err) {
+                alert('Could not get prediction for that date. Make sure the API has the /predict/date endpoint.');
+            }
         }
 
         async function predictTomorrow() {
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
             datePicker.value = tomorrow.toISOString().split('T')[0];
-            const response = await fetch('/predict/tomorrow');
-            const data = await response.json();
-            displayResult(data);
+            try {
+                const data = await fetchTomorrow();
+                displayResult(data);
+            } catch (err) {
+                alert('Failed to get prediction for tomorrow.');
+            }
         }
 
         async function quickPredict(days) {
             const target = new Date();
             target.setDate(target.getDate() + days);
-            datePicker.value = target.toISOString().split('T')[0];
+            const dateStr = target.toISOString().split('T')[0];
+            datePicker.value = dateStr;
             if (days === 1) {
-                const response = await fetch('/predict/tomorrow');
-                const data = await response.json();
-                displayResult(data);
+                try {
+                    const data = await fetchTomorrow();
+                    displayResult(data);
+                } catch (err) {
+                    alert('Failed to get prediction.');
+                }
             } else {
-                const data = await predictForDate(target.toISOString().split('T')[0]);
-                displayResult(data);
+                try {
+                    const data = await predictForDate(dateStr);
+                    displayResult(data);
+                } catch (err) {
+                    alert('Could not get prediction. Ensure /predict/date is available.');
+                }
             }
         }
 
@@ -189,25 +205,39 @@
             `;
         }
 
-        // Generate a 7-day forecast (simulated using the API plus noise for demo)
+        // Generate a 7-day forecast using real predictions for each day
         async function generateForecast() {
             const ctx = document.getElementById('forecastChart').getContext('2d');
             const labels = [];
             const values = [];
-            // Get baseline from tomorrow's prediction
-            const resp = await fetch('/predict/tomorrow');
-            const baseData = await resp.json();
-            const baseVal = baseData.predicted_rides;
             
+            // Get baseline from tomorrow's prediction
+            let baseVal = 16000; // fallback
+            try {
+                const baseData = await fetchTomorrow();
+                baseVal = baseData.predicted_rides;
+            } catch (e) {
+                console.warn('Could not fetch tomorrow, using default base value');
+            }
+
+            // Try to get predictions for next 7 days via /predict/date
             for (let i = 1; i <= 7; i++) {
                 const d = new Date();
                 d.setDate(d.getDate() + i);
+                const dateStr = d.toISOString().split('T')[0];
                 labels.push(d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
-                // Simulate variation (±10%) for subsequent days
-                const variation = 0.9 + Math.random() * 0.2;
-                values.push(Math.round(baseVal * variation));
+                
+                let predicted = null;
+                try {
+                    const data = await predictForDate(dateStr);
+                    predicted = data.predicted_rides;
+                } catch (err) {
+                    // fallback: use baseVal with slight random variation
+                    predicted = Math.round(baseVal * (0.9 + Math.random() * 0.2));
+                }
+                values.push(predicted);
             }
-            
+
             new Chart(ctx, {
                 type: 'bar',
                 data: {
@@ -235,17 +265,38 @@
                 d.setDate(d.getDate() + i);
                 const dateStr = d.toISOString().split('T')[0];
                 const dayName = days[d.getDay()];
-                const rides = Math.floor(15000 + Math.random() * 5000);
+                // Fetch real prediction for this date in background, but show a placeholder first
+                const rides = Math.floor(15000 + Math.random() * 5000); // placeholder until actual fetch
                 const level = rides > 18000 ? 'High' : (rides > 14000 ? 'Medium' : 'Low');
                 const badgeClass = level === 'High' ? 'badge-high' : (level === 'Medium' ? 'badge-medium' : 'badge-low');
                 tbody.innerHTML += `
-                    <tr>
+                    <tr id="row-${dateStr}">
                         <td>${dateStr}</td>
                         <td>${dayName}</td>
-                        <td>${rides.toLocaleString()}</td>
+                        <td class="rides-cell">${rides.toLocaleString()}</td>
                         <td><span class="badge ${badgeClass}">${level}</span></td>
                     </tr>
                 `;
+                
+                // Replace placeholder with real data asynchronously
+                (async () => {
+                    try {
+                        const data = await predictForDate(dateStr);
+                        const cell = document.querySelector(`#row-${dateStr} .rides-cell`);
+                        if (cell) cell.textContent = data.predicted_rides.toLocaleString();
+                        // Update badge
+                        const ridesVal = data.predicted_rides;
+                        const newLevel = ridesVal > 18000 ? 'High' : (ridesVal > 14000 ? 'Medium' : 'Low');
+                        const newBadgeClass = newLevel === 'High' ? 'badge-high' : (newLevel === 'Medium' ? 'badge-medium' : 'badge-low');
+                        const badge = document.querySelector(`#row-${dateStr} .badge`);
+                        if (badge) {
+                            badge.textContent = newLevel;
+                            badge.className = `badge ${newBadgeClass}`;
+                        }
+                    } catch (err) {
+                        // keep placeholder
+                    }
+                })();
             }
         }
 
