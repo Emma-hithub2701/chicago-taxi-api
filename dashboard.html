@@ -85,11 +85,12 @@
     <div class="container">
         <div class="header">
             <h1>🚕 Chicago Taxi Demand Predictor</h1>
-            <p>AI-powered daily ride forecast from 2022 data</p>
+            <p>AI‑powered daily and hourly ride forecast (2022 data)</p>
         </div>
 
+        <!-- Daily Prediction Card -->
         <div class="card">
-            <h2>🔮 Get Prediction</h2>
+            <h2>🔮 Get Daily Prediction</h2>
             <div class="date-picker-row">
                 <input type="date" id="datePicker">
                 <button class="btn btn-primary" onclick="predictDate()">Predict</button>
@@ -104,13 +105,27 @@
             <div id="predictionResult"></div>
         </div>
 
+        <!-- Hourly Forecast Card -->
         <div class="card">
-            <h2>📊 7-Day Forecast</h2>
+            <h2>⏰ Hourly Forecast for a Date</h2>
+            <div class="date-picker-row">
+                <input type="date" id="hourlyDatePicker">
+                <button class="btn btn-primary" onclick="loadHourlyChart()">Show Hourly</button>
+            </div>
+            <div class="chart-container" style="height:300px;">
+                <canvas id="hourlyChart"></canvas>
+            </div>
+        </div>
+
+        <!-- 7‑Day Daily Forecast Card -->
+        <div class="card">
+            <h2>📊 7‑Day Daily Forecast</h2>
             <div class="chart-container">
                 <canvas id="forecastChart"></canvas>
             </div>
         </div>
 
+        <!-- Recent Predictions Table -->
         <div class="card">
             <h2>📋 Sample Recent Predictions</h2>
             <table id="historyTable">
@@ -124,28 +139,22 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-        // ✅ CHANGE THIS TO YOUR PUBLIC RENDER URL
         const BASE_URL = 'https://chicago-taxi-api.onrender.com';
-
         const datePicker = document.getElementById('datePicker');
         const today = new Date().toISOString().split('T')[0];
         datePicker.value = today;
+        document.getElementById('hourlyDatePicker').value = today;
 
-        // Fetch prediction for a specific date using /predict/date endpoint
+        // ---- Daily prediction functions ----
         async function predictForDate(dateStr) {
             const response = await fetch(`${BASE_URL}/predict/date?target_date=${dateStr}`);
-            if (!response.ok) {
-                throw new Error('Prediction failed');
-            }
+            if (!response.ok) throw new Error('Prediction failed');
             return await response.json();
         }
 
-        // Fetch prediction for tomorrow using /predict/tomorrow
         async function fetchTomorrow() {
             const response = await fetch(`${BASE_URL}/predict/tomorrow`);
-            if (!response.ok) {
-                throw new Error('Failed to fetch tomorrow prediction');
-            }
+            if (!response.ok) throw new Error('Failed to fetch tomorrow');
             return await response.json();
         }
 
@@ -156,7 +165,7 @@
                 const data = await predictForDate(date);
                 displayResult(data);
             } catch (err) {
-                alert('Could not get prediction for that date. Make sure the API has the /predict/date endpoint.');
+                alert('Could not get prediction. Is /predict/date available?');
             }
         }
 
@@ -168,30 +177,15 @@
                 const data = await fetchTomorrow();
                 displayResult(data);
             } catch (err) {
-                alert('Failed to get prediction for tomorrow.');
+                alert('Failed to get tomorrow prediction.');
             }
         }
 
-        async function quickPredict(days) {
+        function quickPredict(days) {
             const target = new Date();
             target.setDate(target.getDate() + days);
-            const dateStr = target.toISOString().split('T')[0];
-            datePicker.value = dateStr;
-            if (days === 1) {
-                try {
-                    const data = await fetchTomorrow();
-                    displayResult(data);
-                } catch (err) {
-                    alert('Failed to get prediction.');
-                }
-            } else {
-                try {
-                    const data = await predictForDate(dateStr);
-                    displayResult(data);
-                } catch (err) {
-                    alert('Could not get prediction. Ensure /predict/date is available.');
-                }
-            }
+            datePicker.value = target.toISOString().split('T')[0];
+            predictDate();
         }
 
         function displayResult(data) {
@@ -205,39 +199,62 @@
             `;
         }
 
-        // Generate a 7-day forecast using real predictions for each day
+        // ---- Hourly prediction & chart ----
+        let hourlyChartInstance = null;
+        async function loadHourlyChart() {
+            const dateStr = document.getElementById('hourlyDatePicker').value;
+            if (!dateStr) return alert('Please select a date');
+            try {
+                const response = await fetch(`${BASE_URL}/predict/hourly?target_date=${dateStr}`);
+                const data = await response.json();
+                const hours = data.predictions.map(p => `${p.hour}:00`);
+                const values = data.predictions.map(p => p.predicted_rides);
+                
+                const ctx = document.getElementById('hourlyChart').getContext('2d');
+                if (hourlyChartInstance) hourlyChartInstance.destroy();
+                hourlyChartInstance = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: hours,
+                        datasets: [{
+                            label: 'Predicted Rides per Hour',
+                            data: values,
+                            backgroundColor: '#764ba2',
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: { y: { beginAtZero: true } }
+                    }
+                });
+            } catch (err) {
+                alert('Could not load hourly forecast. Make sure /predict/hourly is available.');
+            }
+        }
+
+        // ---- 7‑day daily forecast chart ----
         async function generateForecast() {
             const ctx = document.getElementById('forecastChart').getContext('2d');
             const labels = [];
             const values = [];
-            
-            // Get baseline from tomorrow's prediction
-            let baseVal = 16000; // fallback
+            let baseVal = 16000;
             try {
                 const baseData = await fetchTomorrow();
                 baseVal = baseData.predicted_rides;
-            } catch (e) {
-                console.warn('Could not fetch tomorrow, using default base value');
-            }
-
-            // Try to get predictions for next 7 days via /predict/date
+            } catch (e) {}
             for (let i = 1; i <= 7; i++) {
                 const d = new Date();
                 d.setDate(d.getDate() + i);
                 const dateStr = d.toISOString().split('T')[0];
                 labels.push(d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
-                
-                let predicted = null;
                 try {
                     const data = await predictForDate(dateStr);
-                    predicted = data.predicted_rides;
+                    values.push(data.predicted_rides);
                 } catch (err) {
-                    // fallback: use baseVal with slight random variation
-                    predicted = Math.round(baseVal * (0.9 + Math.random() * 0.2));
+                    values.push(Math.round(baseVal * (0.9 + Math.random()*0.2)));
                 }
-                values.push(predicted);
             }
-
             new Chart(ctx, {
                 type: 'bar',
                 data: {
@@ -265,8 +282,7 @@
                 d.setDate(d.getDate() + i);
                 const dateStr = d.toISOString().split('T')[0];
                 const dayName = days[d.getDay()];
-                // Fetch real prediction for this date in background, but show a placeholder first
-                const rides = Math.floor(15000 + Math.random() * 5000); // placeholder until actual fetch
+                const rides = Math.floor(15000 + Math.random() * 5000);
                 const level = rides > 18000 ? 'High' : (rides > 14000 ? 'Medium' : 'Low');
                 const badgeClass = level === 'High' ? 'badge-high' : (level === 'Medium' ? 'badge-medium' : 'badge-low');
                 tbody.innerHTML += `
@@ -277,14 +293,11 @@
                         <td><span class="badge ${badgeClass}">${level}</span></td>
                     </tr>
                 `;
-                
-                // Replace placeholder with real data asynchronously
                 (async () => {
                     try {
                         const data = await predictForDate(dateStr);
                         const cell = document.querySelector(`#row-${dateStr} .rides-cell`);
                         if (cell) cell.textContent = data.predicted_rides.toLocaleString();
-                        // Update badge
                         const ridesVal = data.predicted_rides;
                         const newLevel = ridesVal > 18000 ? 'High' : (ridesVal > 14000 ? 'Medium' : 'Low');
                         const newBadgeClass = newLevel === 'High' ? 'badge-high' : (newLevel === 'Medium' ? 'badge-medium' : 'badge-low');
@@ -293,9 +306,7 @@
                             badge.textContent = newLevel;
                             badge.className = `badge ${newBadgeClass}`;
                         }
-                    } catch (err) {
-                        // keep placeholder
-                    }
+                    } catch (err) {}
                 })();
             }
         }
@@ -304,6 +315,8 @@
         predictTomorrow();
         generateForecast();
         populateHistory();
+        // Optional: pre‑load hourly chart for today
+        // loadHourlyChart();
     </script>
 </body>
 </html>
