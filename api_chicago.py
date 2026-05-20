@@ -96,3 +96,53 @@ def health():
 @app.get("/dashboard")
 def serve_dashboard():
     return FileResponse("dashboard.html")
+# ========== HOURLY PREDICTION ENDPOINT ==========
+@app.get("/predict/hourly")
+def predict_hourly(target_date: str):
+    """
+    Returns 24 hourly ride predictions for the given date.
+    Example: /predict/hourly?target_date=2026-05-25
+    """
+    from datetime import datetime as dt
+    try:
+        target_dt = dt.strptime(target_date, "%Y-%m-%d")
+    except ValueError:
+        return {"error": "Invalid date format. Use YYYY-MM-DD."}
+
+    # Load hourly model and data
+    with open('taxi_model_hourly.pkl', 'rb') as f:
+        hourly_model = pickle.load(f)
+    with open('feature_names_hourly.pkl', 'rb') as f:
+        hourly_feature_names = pickle.load(f)
+    recent_hourly = pd.read_csv('recent_data_hourly.csv')
+    recent_hourly['datetime'] = pd.to_datetime(recent_hourly['datetime'])
+    recent_rides = recent_hourly['rides'].tolist()
+
+    predictions = []
+    n = len(recent_rides)
+
+    for hour in range(24):
+        features = {
+            'hour': hour,
+            'dayofweek': target_dt.weekday(),
+            'month': target_dt.month,
+            'is_weekend': 1 if target_dt.weekday() >= 5 else 0,
+            'rides_lag_1h': recent_rides[-1] if n >= 1 else 0,
+            'rides_lag_2h': recent_rides[-2] if n >= 2 else (recent_rides[-1] if n >= 1 else 0),
+            'rides_lag_24h': recent_rides[-24] if n >= 24 else (recent_rides[-1] if n >= 1 else 0),
+            'rides_lag_168h': recent_rides[-168] if n >= 168 else (recent_rides[-1] if n >= 1 else 0),
+            'rolling_mean_3h': np.mean(recent_rides[-3:]) if n >= 3 else (recent_rides[-1] if n >= 1 else 0),
+            'rolling_mean_24h': np.mean(recent_rides[-24:]) if n >= 24 else (recent_rides[-1] if n >= 1 else 0)
+        }
+
+        X = pd.DataFrame([features])[hourly_feature_names]
+        pred = hourly_model.predict(X)[0]
+        predictions.append({
+            "hour": hour,
+            "predicted_rides": int(pred)
+        })
+
+    return {
+        "date": target_date,
+        "predictions": predictions
+    }
